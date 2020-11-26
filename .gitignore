@@ -1,0 +1,7 @@
+# Text editors and IDEs
+## VS Code
+.vscode/
+
+# Generated files
+## C++
+./build/
