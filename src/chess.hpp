@@ -21,7 +21,7 @@ enum class Occupation {
     white_bishop,
     white_knight,
     white_pawn,
-    white_pawn_ep, // en passant
+    white_pawn_ep, // can be captured by en passant
 
     black_king,
     black_queen,
@@ -29,7 +29,7 @@ enum class Occupation {
     black_bishop,
     black_knight,
     black_pawn,
-    black_pawn_ep, // en passant
+    black_pawn_ep, // can be captured by en passant
 
     last_
 };
@@ -251,6 +251,9 @@ inline auto validate_operation(const GameState& game_state, Operation op) {
     if(occu_before == empty) {
         return OperationValidationResult { false, "Not a piece." };
     }
+    if(op.x0 == op.x1 && op.y0 == op.y1) {
+        return OperationValidationResult { false, "Not a valid move." };
+    }
     if(is_white_piece(occu_before) && game_state.black_turn) {
         return OperationValidationResult { false, "Black turn." };
     }
@@ -264,15 +267,17 @@ inline auto validate_operation(const GameState& game_state, Operation op) {
 
     auto occu_after = game_state.board_state(op.x1, op.y1);
 
-    // auxiliary functions
-    const auto check_occupied = [&] {
-        return !(game_state.black_turn && is_black_piece(occu_after))
-            && !(!game_state.black_turn && is_white_piece(occu_after));
-    };
+    const bool target_occupied_by_friend =
+        (game_state.black_turn && is_black_piece(occu_after)) ||
+        (!game_state.black_turn && is_white_piece(occu_after));
+    const bool target_occupied_by_enemy =
+        (game_state.black_turn && is_white_piece(occu_after)) ||
+        (!game_state.black_turn && is_black_piece(occu_after));
 
+    // auxiliary functions
     const auto check_king_move = [&] {
         return (abs(op.x0 - op.x1) <= 1 && abs(op.y0 - op.y1) <= 1)
-            && check_occupied()
+            && !target_occupied_by_friend
             && !game_state.board_state.position_attacked(op.x1, op.y1, !game_state.black_turn);
     };
     const auto check_king_castle = [&] {
@@ -337,6 +342,150 @@ inline auto validate_operation(const GameState& game_state, Operation op) {
             );
     };
 
+    const auto check_diag_move = [&] {
+        if(target_occupied_by_friend || abs(op.x1 - op.x0) != abs(op.y1 - op.y0)) return false;
+
+        // check empty along path
+        const int num_step = abs(op.x1 - op.x0);
+        if(op.x1 > op.x0) {
+            if(op.y1 > op.y0) {
+                for(int step = 1; step < num_step; ++step) {
+                    if(game_state.board_state(op.x0 + step, op.y0 + step) != empty) return false;
+                }
+            }
+            else {
+                for(int step = 1; step < num_step; ++step) {
+                    if(game_state.board_state(op.x0 + step, op.y0 - step) != empty) return false;
+                }
+            }
+        }
+        else {
+            if(op.y1 > op.y0) {
+                for(int step = 1; step < num_step; ++step) {
+                    if(game_state.board_state(op.x0 - step, op.y0 + step) != empty) return false;
+                }
+            }
+            else {
+                for(int step = 1; step < num_step; ++step) {
+                    if(game_state.board_state(op.x0 - step, op.y0 - step) != empty) return false;
+                }
+            }
+        }
+
+        return true;
+    };
+    const auto check_cross_move = [&] {
+        if(target_occupied_by_friend || (op.x1 != op.x0 && op.y1 != op.y0)) return false;
+
+        // check empty along path
+        if(op.x1 == op.x0) {
+            const int num_step = abs(op.y1 - op.y0);
+            if(op.y1 > op.y0) {
+                for(int step = 1; step < num_step; ++step) {
+                    if(game_state.board_state(op.x0, op.y0 + step) != empty) return false;
+                }
+            }
+            else {
+                for(int step = 1; step < num_step; ++step) {
+                    if(game_state.board_state(op.x0, op.y0 - step) != empty) return false;
+                }
+            }
+        }
+        else {
+            const int num_step = abs(op.x1 - op.x0);
+            if(op.x1 > op.x0) {
+                for(int step = 1; step < num_step; ++step) {
+                    if(game_state.board_state(op.x0 + step, op.y0) != empty) return false;
+                }
+            }
+            else {
+                for(int step = 1; step < num_step; ++step) {
+                    if(game_state.board_state(op.x0 - step, op.y0) != empty) return false;
+                }
+            }
+        }
+
+        return true;
+    };
+
+    const auto check_knight_move = [&] {
+        return !target_occupied_by_friend
+            &&
+                (
+                    (abs(op.y1 - op.y0) == 2 && abs(op.x1 - op.x0) == 1) ||
+                    (abs(op.y1 - op.y0) == 1 && abs(op.x1 - op.x0) == 1)
+                );
+    };
+
+    const auto check_pawn_move = [&] {
+        return
+            // move forward
+            (
+                op.y1 - op.y0 == (game_state.black_turn ? -1 : 1)
+                && op.x1 == op.x0
+                && !target_occupied_by_friend
+                && !target_occupied_by_enemy
+            )
+            // or capture
+            || (
+                op.y1 - op.y0 == (game_state.black_turn ? -1 : 1)
+                && abs(op.x1 - op.x0) == 1
+                && target_occupied_by_enemy
+            )
+            // or en passant capture
+            || (
+                op.y1 - op.y0 == (game_state.black_turn ? -1 : 1)
+                && abs(op.x1 - op.x0) == 1
+                && game_state.board_state(op.x1, op.y0) == (game_state.black_turn ? white_pawn_ep : black_pawn_ep)
+                && !target_occupied_by_friend
+                && !target_occupied_by_enemy
+            );
+    };
+    const auto check_pawn_promote = [&] {
+        return
+            (
+                !game_state.black_turn && (
+                    op.code == underlying(white_queen) ||
+                    op.code == underlying(white_rook) ||
+                    op.code == underlying(white_bishop) ||
+                    op.code == underlying(white_knight)
+                )
+            )
+            || (
+                game_state.black_turn && (
+                    op.code == underlying(black_queen) ||
+                    op.code == underlying(black_rook) ||
+                    op.code == underlying(black_bishop) ||
+                    op.code == underlying(black_knight)
+                )
+            );
+    };
+
+    const auto check_pawn_ep_move = [&] {
+        return
+            // move forward
+            (
+                op.y1 - op.y0 == (game_state.black_turn ? -1 : 1)
+                && op.x1 == op.x0
+                && !target_occupied_by_friend
+                && !target_occupied_by_enemy
+            )
+            // or skip forward
+            || (
+                op.y1 - op.y0 == (game_state.black_turn ? -2 : 2)
+                && op.x1 == op.x0
+                && !target_occupied_by_friend
+                && !target_occupied_by_enemy
+                && game_state.board_state(op.x0, op.y0 + (game_state.black_turn ? -1 : 1)) == empty
+            )
+            // or capture
+            || (
+                op.y1 - op.y0 == (game_state.black_turn ? -1 : 1)
+                && abs(op.x1 - op.x0) == 1
+                && target_occupied_by_enemy
+            );
+    };
+
 
     switch(occu_before) {
         // king
@@ -357,11 +506,94 @@ inline auto validate_operation(const GameState& game_state, Operation op) {
                 return OperationValidationResult { false, "Invalid king operation." };
             }
             break;
+
+        case white_queen: [[fallthrough]];
+        case black_queen:
+
+            if(op.category != Operation::Category::move) {
+                return OperationValidationResult { false, "Invalid queen operation." };
+            }
+            if(!check_diag_move() && !check_cross_move()) {
+                return OperationValidationResult { false, "Invalid queen move." };
+            }
+            break;
+
+        case white_bishop: [[fallthrough]];
+        case black_bishop:
+
+            if(op.category != Operation::Category::move) {
+                return OperationValidationResult { false, "Invalid bishop operation." };
+            }
+            if(!check_diag_move()) {
+                return OperationValidationResult { false, "Invalid bishop move." };
+            }
+            break;
+
+        case white_rook: [[fallthrough]];
+        case black_rook:
+
+            if(op.category != Operation::Category::move) {
+                return OperationValidationResult { false, "Invalid rook operation." };
+            }
+            if(!check_cross_move()) {
+                return OperationValidationResult { false, "Invalid rook move." };
+            }
+            break;
+
+        case white_knight: [[fallthrough]];
+        case black_knight:
+
+            if(op.category != Operation::Category::move) {
+                return OperationValidationResult { false, "Invalid knight operation." };
+            }
+            if(!check_knight_move()) {
+                return OperationValidationResult { false, "Invalid knight move." };
+            }
+            break;
+
+        case white_pawn: [[fallthrough]];
+        case black_pawn:
+
+            if(op.y1 == (game_state.black_turn ? 0 : 7)) {
+                if(
+                    op.category != Operation::Category::promote
+                    || !check_pawn_move()
+                    || !check_pawn_promote()
+                ) {
+                    return OperationValidationResult { false, "Invalid pawn promote." };
+                }
+            }
+            else {
+                if(
+                    op.category != Operation::Category::move
+                    || !check_pawn_move()
+                ) {
+                    return OperationValidationResult { false, "Invalid pawn move." };
+                }
+            }
+            break;
+
+        case white_pawn_ep: [[fallthrough]];
+        case black_pawn_ep:
+
+            if(op.category != Operation::Category::move) {
+                return OperationValidationResult { false, "Invalid pawn operation." };
+            }
+            if(!check_pawn_ep_move()) {
+                return OperationValidationResult { false, "Invalid pawn move." };
+            }
+            break;
     }
 
     return OperationValidationResult { true };
 }
 
+
+// game procedure specification
+
+// GetOp: function type that returns an Operation
+template< typename GetOp >
+inline void game_procedure() {}
 
 } // namespace chess
 
