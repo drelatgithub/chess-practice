@@ -10,18 +10,26 @@ int main() {
     using namespace std;
     using namespace chess;
 
-    auto gs = game_standard_opening();
+    GameHistory gh;
+    auto gs_init = game_standard_opening();
+    auto board_state_hash = chess::hash(gs_init.board_state, gh.zobrist_table);
+    gh.push_game_state(gs_init, board_state_hash);
+
     bool print_status = true;
 
-    while(gs.status == GameState::Status::active) {
+    while(gh.history.back().status == GameState::Status::active) {
+
+        auto& gs = gh.history.back();
+
         if(print_status) {
             gs.pretty_print_to(cout);
+            cout << "board hash: " << board_state_hash << '\n';
             cout << endl;
         }
         print_status = false;
 
         // prompt for input
-        cout << (gs.black_turn ? "(black turn)" : "(white turn)") << " > " << flush;
+        cout << (gs.board_state.black_turn ? "(black turn)" : "(white turn)") << " > " << flush;
 
         // parse input
         string line;
@@ -89,13 +97,13 @@ int main() {
                         op.category = Operation::Category::promote;
                         const char p = words[3][0];
                         if(p == 'q') {
-                            op.code = underlying(gs.black_turn ? Occupation::black_queen : Occupation::white_queen);
+                            op.code = underlying(gs.board_state.black_turn ? Occupation::black_queen : Occupation::white_queen);
                         } else if(p == 'r') {
-                            op.code = underlying(gs.black_turn ? Occupation::black_rook : Occupation::white_rook);
+                            op.code = underlying(gs.board_state.black_turn ? Occupation::black_rook : Occupation::white_rook);
                         } else if(p == 'b') {
-                            op.code = underlying(gs.black_turn ? Occupation::black_bishop : Occupation::white_bishop);
+                            op.code = underlying(gs.board_state.black_turn ? Occupation::black_bishop : Occupation::white_bishop);
                         } else if(p == 'n') {
-                            op.code = underlying(gs.black_turn ? Occupation::black_knight : Occupation::white_knight);
+                            op.code = underlying(gs.board_state.black_turn ? Occupation::black_knight : Occupation::white_knight);
                         } else {
                             cout << "Unrecognized promotion " << p << endl;
                             continue;
@@ -103,17 +111,19 @@ int main() {
                     }
                 }
 
-                gs = game_round(
-                    gs,
+                board_state_hash = game_round(
+                    gh,
+                    board_state_hash,
                     [&]() { return op; }
                 );
                 print_status = true;
             }
         }
         else if(words[0] == "0-0") {
-            const int king_y = gs.black_turn ? 7 : 0;
-            gs = game_round(
-                gs,
+            const int king_y = gs.board_state.black_turn ? 7 : 0;
+            board_state_hash = game_round(
+                gh,
+                board_state_hash,
                 [&]() {
                     return Operation {
                         Operation::Category::castle,
@@ -125,9 +135,10 @@ int main() {
             print_status = true;
         }
         else if(words[0] == "0-0-0") {
-            const int king_y = gs.black_turn ? 7 : 0;
-            gs = game_round(
-                gs,
+            const int king_y = gs.board_state.black_turn ? 7 : 0;
+            board_state_hash = game_round(
+                gh,
+                board_state_hash,
                 [&]() {
                     return Operation {
                         Operation::Category::castle,

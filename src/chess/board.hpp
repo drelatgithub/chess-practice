@@ -26,7 +26,6 @@ enum class Occupation {
     white_bishop,
     white_knight,
     white_pawn,
-    white_pawn_init, // can be captured by en passant
 
     black_king,
     black_queen,
@@ -34,30 +33,23 @@ enum class Occupation {
     black_bishop,
     black_knight,
     black_pawn,
-    black_pawn_init, // can be captured by en passant
 
     last_
 };
 constexpr auto num_occupation_state() { return underlying(Occupation::last_); }
 constexpr bool is_white_piece(Occupation o) {
     return underlying(o) >= underlying(Occupation::white_king)
-        && underlying(o) <= underlying(Occupation::white_pawn_init);
+        && underlying(o) <= underlying(Occupation::white_pawn);
 }
 constexpr bool is_black_piece(Occupation o) {
     return underlying(o) >= underlying(Occupation::black_king)
-        && underlying(o) <= underlying(Occupation::black_pawn_init);
-}
-constexpr bool is_white_pawn(Occupation o) {
-    return o == Occupation::white_pawn || o == Occupation::white_pawn_init;
-}
-constexpr bool is_black_pawn(Occupation o) {
-    return o == Occupation::black_pawn || o == Occupation::black_pawn_init;
+        && underlying(o) <= underlying(Occupation::black_pawn);
 }
 
 constexpr const char* occupation_text[] {
     " ",
-    "♔", "♕", "♖", "♗", "♘", "♙", "♙",
-    "♚", "♛", "♜", "♝", "♞", "♟", "♟"
+    "♔", "♕", "♖", "♗", "♘", "♙",
+    "♚", "♛", "♜", "♝", "♞", "♟"
 };
 constexpr auto text(Occupation o) { return occupation_text[underlying(o)]; }
 
@@ -72,10 +64,21 @@ struct BoardState {
     //   a1, ..., h1,  a2, ..., h7,  a8, ..., h8
     Occupation board[size] {};
 
+    bool       black_turn = false;
+
     bool       white_castle_queen = true;
     bool       white_castle_king = true;
     bool       black_castle_queen = true;
     bool       black_castle_king = true;
+
+    // The column number of last pawn skip move by the opponent.
+    // range { -1, 0, ..., width-1 }
+    // -1 indicates one of the following:
+    //   (1) This is the first turn.
+    //   (2) The opponent did not move a pawn two squares in the last turn.
+    //   (3) The opponent moved a pawn two squares in the last turn, but no
+    //       friendly pawn is nearby.
+    int        en_passant_column = -1;
 
 
     static constexpr bool is_location_valid(int x, int y) {
@@ -124,14 +127,14 @@ struct BoardState {
 
         if(by_black) {
             if(
-                (is_location_valid(x-1, y+1) && is_black_pawn((*this)(x-1, y+1))) ||
-                (is_location_valid(x+1, y+1) && is_black_pawn((*this)(x+1, y+1)))
+                (is_location_valid(x-1, y+1) && (*this)(x-1, y+1) == black_pawn) ||
+                (is_location_valid(x+1, y+1) && (*this)(x+1, y+1) == black_pawn)
             ) return true;
         }
         else {
             if(
-                (is_location_valid(x-1, y-1) && is_white_pawn((*this)(x-1, y-1))) ||
-                (is_location_valid(x+1, y-1) && is_white_pawn((*this)(x+1, y-1)))
+                (is_location_valid(x-1, y-1) && (*this)(x-1, y-1) == white_pawn) ||
+                (is_location_valid(x+1, y-1) && (*this)(x+1, y-1) == white_pawn)
             ) return true;
         }
 
@@ -209,10 +212,14 @@ struct BoardStateZobristTable {
 
     HashInt board[BoardState::size][num_occupation_state()] {};
 
+    HashInt black_turn = 0;
+
     HashInt white_castle_queen = 0;
     HashInt white_castle_king = 0;
     HashInt black_castle_queen = 0;
     HashInt black_castle_king = 0;
+
+    HashInt en_passant_column[BoardState::width] {};
 
     static auto generate() {
         BoardStateZobristTable res;
@@ -224,10 +231,15 @@ struct BoardStateZobristTable {
                 res.board[i][j] = dis(rand_gen);
             }
         }
+        res.black_turn         = dis(rand_gen);
         res.white_castle_queen = dis(rand_gen);
         res.white_castle_king  = dis(rand_gen);
         res.black_castle_queen = dis(rand_gen);
         res.black_castle_king  = dis(rand_gen);
+
+        for(int i = 0; i < BoardState::width; ++i) {
+            res.en_passant_column[i] = dis(rand_gen);
+        }
 
         return res;
     }
@@ -241,14 +253,67 @@ constexpr auto hash(const BoardState& board_state, const BoardStateZobristTable&
         res ^= hash_table.board[i][j];
     }
 
+    if(board_state.black_turn)         res ^= hash_table.black_turn;
+
     if(board_state.white_castle_queen) res ^= hash_table.white_castle_queen;
     if(board_state.white_castle_king)  res ^= hash_table.white_castle_king;
     if(board_state.black_castle_queen) res ^= hash_table.black_castle_queen;
     if(board_state.black_castle_king)  res ^= hash_table.black_castle_king;
 
+    if(board_state.en_passant_column != -1) {
+        res ^= hash_table.en_passant_column[board_state.en_passant_column];
+    }
+
     return res;
 }
 
+// auxiliary functions for incremental hash
+inline void aux_hash_set_board_piece(
+    BoardStateZobristTable::HashInt& hash_val,
+    BoardState&                      board_state,
+    const BoardStateZobristTable&    hash_table,
+    int                              x,
+    int                              y,
+    Occupation                       new_piece
+) {
+    const int i = BoardState::coord_to_index(x, y);
+    auto&     old_piece = board_state.board[i];
+
+    // renew hash value
+    hash_val ^= hash_table.board[i][underlying(old_piece)];
+    hash_val ^= hash_table.board[i][underlying(new_piece)];
+
+    old_piece = new_piece;
+}
+inline void aux_hash_set_bool(
+    BoardStateZobristTable::HashInt& hash_val,
+    bool&                            old_bool_val,
+    BoardStateZobristTable::HashInt  bool_hash,
+    bool                             new_bool_val
+) {
+    if(old_bool_val != new_bool_val) {
+        hash_val ^= bool_hash;
+    }
+    old_bool_val = new_bool_val;
+}
+inline void aux_hash_set_en_passant_column(
+    BoardStateZobristTable::HashInt& hash_val,
+    BoardState&                      board_state,
+    const BoardStateZobristTable&    hash_table,
+    int                              new_val
+) {
+    auto& old_val = board_state.en_passant_column;
+
+    // renew by xoring out and in
+    if(old_val != -1) {
+        hash_val ^= hash_table.en_passant_column[old_val];
+    }
+    if(new_val != -1) {
+        hash_val ^= hash_table.en_passant_column[new_val];
+    }
+
+    old_val = new_val;
+}
 
 struct GameState {
     enum class Status {
@@ -256,7 +321,6 @@ struct GameState {
     };
 
     BoardState board_state;
-    bool       black_turn = false;
 
     // generated state
     int        white_king_x = 0;
@@ -266,37 +330,38 @@ struct GameState {
     bool       check = false;
     Status     status = Status::active;
 
-    int        friend_king_x() const { return black_turn ? black_king_x : white_king_x; }
-    int        friend_king_y() const { return black_turn ? black_king_y : white_king_y; }
-    int        enemy_king_x() const { return black_turn ? white_king_x : black_king_x; }
-    int        enemy_king_y() const { return black_turn ? white_king_y : black_king_y; }
+    int        friend_king_x() const { return board_state.black_turn ? black_king_x : white_king_x; }
+    int        friend_king_y() const { return board_state.black_turn ? black_king_y : white_king_y; }
+    int        enemy_king_x() const { return board_state.black_turn ? white_king_x : black_king_x; }
+    int        enemy_king_y() const { return board_state.black_turn ? white_king_y : black_king_y; }
 
     void pretty_print_to(std::ostream& os) const {
         os
             << "game status: "
             << (
                 status == Status::active
-                    ? (black_turn ? "black turn" : "white turn")
+                    ? (board_state.black_turn ? "black turn" : "white turn")
                     : status == Status::white_win ? "white wins"
                     : status == Status::black_win ? "black wins"
                     : "draw"
             ) << '\n'
-            << "white: king at " << (char)(white_king_x + 'a') << (char)(white_king_y + '1')
-                << " castle "
+            << "white: king " << (char)(white_king_x + 'a') << (char)(white_king_y + '1')
+                << ", castle "
                 << (
                     board_state.white_castle_queen
                         ? (board_state.white_castle_king ? "both" : "queen")
                         : (board_state.white_castle_king ? "king" : "none")
                 )
                 << "\n"
-            << "black: king at " << (char)(black_king_x + 'a') << (char)(black_king_y + '1')
-                << " castle "
+            << "black: king " << (char)(black_king_x + 'a') << (char)(black_king_y + '1')
+                << ", castle "
                 << (
                     board_state.black_castle_queen
                         ? (board_state.black_castle_king ? "both" : "queen")
                         : (board_state.black_castle_king ? "king" : "none")
                 )
                 << "\n"
+            << "en passant column: " << (board_state.en_passant_column >= 0 ? (char)(board_state.en_passant_column + 'a') : '-') << '\n'
             << "checked: " << check << '\n'
             << "\n";
 
@@ -315,16 +380,17 @@ constexpr GameState game_standard_opening() {
     state(2, 0) = state(5, 0) = white_bishop;
     state(3, 0) = white_queen;
     state(4, 0) = white_king;
-    for(int i = 0; i < BoardState::width; ++i) state(i, 1) = white_pawn_init;
+    for(int i = 0; i < BoardState::width; ++i) state(i, 1) = white_pawn;
 
     state(0, 7) = state(7, 7) = black_rook;
     state(1, 7) = state(6, 7) = black_knight;
     state(2, 7) = state(5, 7) = black_bishop;
     state(3, 7) = black_queen;
     state(4, 7) = black_king;
-    for(int i = 0; i < BoardState::width; ++i) state(i, 6) = black_pawn_init;
+    for(int i = 0; i < BoardState::width; ++i) state(i, 6) = black_pawn;
 
-    game_state.black_turn = false;
+    state.black_turn = false;
+
     game_state.white_king_x = 4;
     game_state.white_king_y = 0;
     game_state.black_king_x = 4;
