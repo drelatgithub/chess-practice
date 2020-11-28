@@ -91,3 +91,7 @@ endif()
 # catch2
 find_package(Catch2 CONFIG REQUIRED)
 target_link_libraries(chess PRIVATE Catch2::Catch2)
+
+# asio
+find_package(asio CONFIG REQUIRED)
+target_link_libraries(chess PRIVATE asio asio::asio)

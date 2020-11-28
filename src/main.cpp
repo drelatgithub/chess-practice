@@ -3,7 +3,7 @@
 #include <sstream>
 #include <vector>
 
-#include "chess.hpp"
+#include "chess/operation.hpp"
 
 int main() {
 
