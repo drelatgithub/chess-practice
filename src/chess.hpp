@@ -21,7 +21,7 @@ enum class Occupation {
     white_bishop,
     white_knight,
     white_pawn,
-    white_pawn_ep, // can be captured by en passant
+    white_pawn_init, // can be captured by en passant
 
     black_king,
     black_queen,
@@ -29,24 +29,24 @@ enum class Occupation {
     black_bishop,
     black_knight,
     black_pawn,
-    black_pawn_ep, // can be captured by en passant
+    black_pawn_init, // can be captured by en passant
 
     last_
 };
 constexpr auto num_occupation_state() { return underlying(Occupation::last_); }
 constexpr bool is_white_piece(Occupation o) {
     return underlying(o) >= underlying(Occupation::white_king)
-        && underlying(o) <= underlying(Occupation::white_pawn_ep);
+        && underlying(o) <= underlying(Occupation::white_pawn_init);
 }
 constexpr bool is_black_piece(Occupation o) {
     return underlying(o) >= underlying(Occupation::black_king)
-        && underlying(o) <= underlying(Occupation::black_pawn_ep);
+        && underlying(o) <= underlying(Occupation::black_pawn_init);
 }
 constexpr bool is_white_pawn(Occupation o) {
-    return o == Occupation::white_pawn || o == Occupation::white_pawn_ep;
+    return o == Occupation::white_pawn || o == Occupation::white_pawn_init;
 }
 constexpr bool is_black_pawn(Occupation o) {
-    return o == Occupation::black_pawn || o == Occupation::black_pawn_ep;
+    return o == Occupation::black_pawn || o == Occupation::black_pawn_init;
 }
 
 constexpr const char* occupation_text[] {
@@ -60,6 +60,7 @@ constexpr auto text(Occupation o) { return occupation_text[underlying(o)]; }
 struct BoardState {
     inline static constexpr int width = 8;
     inline static constexpr int height = 8;
+    inline static constexpr int max_side_size = std::max(width, height);
     inline static constexpr int size = width * height;
 
     // The board is stored in the following order:
@@ -144,7 +145,7 @@ struct BoardState {
             }
             return false;
         };
-        for(int step = 1; step < std::max(width, height); ++step) {
+        for(int step = 1; step < max_side_size; ++step) {
             if(
                 has_enemy_diag(x+step, y+step) ||
                 has_enemy_diag(x-step, y+step) ||
@@ -191,10 +192,28 @@ struct BoardState {
 };
 
 
-constexpr BoardState board_standard_opening() {
+struct GameState {
+    enum class Status {
+        active, white_win, black_win, draw
+    };
+
+    BoardState board_state;
+    bool       black_turn = false;
+
+    // generated state
+    int        white_king_x = 0;
+    int        white_king_y = 0;
+    int        black_king_x = 0;
+    int        black_king_y = 0;
+    bool       check = false;
+    Status     status = Status::active;
+};
+
+constexpr GameState game_standard_opening() {
     using enum Occupation;
 
-    BoardState state;
+    GameState game_state;
+    auto& state = game_state.board_state;
 
     state(0, 0) = state(7, 0) = white_rook;
     state(1, 0) = state(6, 0) = white_knight;
@@ -210,16 +229,16 @@ constexpr BoardState board_standard_opening() {
     state(4, 7) = black_king;
     for(int i = 0; i < BoardState::width; ++i) state(i, 6) = black_pawn;
 
-    return state;
+    game_state.black_turn = false;
+    game_state.white_king_x = 4;
+    game_state.white_king_y = 0;
+    game_state.black_king_x = 4;
+    game_state.black_king_y = 7;
+
+    return game_state;
 }
 
-struct GameState {
-    BoardState board_state;
-    bool       black_turn = false;
 
-    // generated state
-    bool       check = false;
-};
 
 // Rules and state changes
 
@@ -243,6 +262,10 @@ struct OperationValidationResult {
 };
 // This function assumes that
 //   - The game is not in the checkmate state.
+//
+// Note:
+//   - This function does not check whether the move would leave the king in a
+//     checked state.
 inline auto validate_operation(const GameState& game_state, Operation op) {
     using enum Occupation;
 
@@ -436,7 +459,7 @@ inline auto validate_operation(const GameState& game_state, Operation op) {
             || (
                 op.y1 - op.y0 == (game_state.black_turn ? -1 : 1)
                 && abs(op.x1 - op.x0) == 1
-                && game_state.board_state(op.x1, op.y0) == (game_state.black_turn ? white_pawn_ep : black_pawn_ep)
+                && game_state.board_state(op.x1, op.y0) == (game_state.black_turn ? white_pawn_init : black_pawn_init)
                 && !target_occupied_by_friend
                 && !target_occupied_by_enemy
             );
@@ -461,7 +484,7 @@ inline auto validate_operation(const GameState& game_state, Operation op) {
             );
     };
 
-    const auto check_pawn_ep_move = [&] {
+    const auto check_pawn_init_move = [&] {
         return
             // move forward
             (
@@ -573,13 +596,13 @@ inline auto validate_operation(const GameState& game_state, Operation op) {
             }
             break;
 
-        case white_pawn_ep: [[fallthrough]];
-        case black_pawn_ep:
+        case white_pawn_init: [[fallthrough]];
+        case black_pawn_init:
 
             if(op.category != Operation::Category::move) {
                 return OperationValidationResult { false, "Invalid pawn operation." };
             }
-            if(!check_pawn_ep_move()) {
+            if(!check_pawn_init_move()) {
                 return OperationValidationResult { false, "Invalid pawn move." };
             }
             break;
@@ -588,12 +611,295 @@ inline auto validate_operation(const GameState& game_state, Operation op) {
     return OperationValidationResult { true };
 }
 
+// Apply an operation in place without checking for validity.
+inline void apply_operation_in_place(GameState& game_state, Operation op) {
+    using enum Occupation;
+
+    const auto is_enemy = [&](Occupation o) {
+        return (game_state.black_turn ? is_white_piece(o) : is_black_piece(o));
+    };
+
+    auto& piece0 = game_state.board_state(op.x0, op.y0);
+
+    if(op.category == Operation::Category::move) {
+        auto& piece1 = game_state.board_state(op.x1, op.y1);
+
+        // en passant
+        if((piece0 == black_pawn || piece0 == white_pawn) && piece1 == empty && op.x0 != op.x1) {
+            game_state.board_state(op.x1, op.y0) = empty; // captured
+        }
+        // castle disabling
+        if(piece0 == white_rook) {
+            if(op.x0 == 0 && op.y0 == 0) game_state.board_state.white_castle_queen = false;
+            if(op.x0 == 7 && op.y0 == 0) game_state.board_state.white_castle_king = false;
+        }
+        if(piece0 == black_rook) {
+            if(op.x0 == 0 && op.y0 == 7) game_state.board_state.black_castle_queen = false;
+            if(op.x0 == 7 && op.y0 == 7) game_state.board_state.black_castle_king = false;
+        }
+        if(piece0 == white_king) {
+            game_state.board_state.white_castle_queen = false;
+            game_state.board_state.white_castle_king = false;
+            game_state.white_king_x = op.x1;
+            game_state.white_king_y = op.y1;
+        }
+        if(piece0 == black_king) {
+            game_state.board_state.black_castle_queen = false;
+            game_state.board_state.black_castle_king = false;
+            game_state.black_king_x = op.x1;
+            game_state.black_king_y = op.y1;
+        }
+
+        piece1 = piece0;
+        piece0 = empty;
+
+    }
+    else if(op.category == Operation::Category::castle) {
+        if(op.y1 == 0) {
+            if(op.x1 == 2) {
+                // white queen
+                piece0 = empty;
+                game_state.board_state(0, 0) = empty;
+                game_state.board_state(2, 0) = white_king;
+                game_state.board_state(3, 0) = white_rook;
+                game_state.white_king_x = 2;
+                game_state.white_king_y = 0;
+            }
+            else {
+                // white king
+                piece0 = empty;
+                game_state.board_state(7, 0) = empty;
+                game_state.board_state(6, 0) = white_king;
+                game_state.board_state(5, 0) = white_rook;
+                game_state.white_king_x = 6;
+                game_state.white_king_y = 0;
+            }
+            game_state.board_state.white_castle_queen = false;
+            game_state.board_state.white_castle_king = false;
+        }
+        else {
+            if(op.x1 == 2) {
+                // black queen
+                piece0 = empty;
+                game_state.board_state(0, 7) = empty;
+                game_state.board_state(2, 7) = black_king;
+                game_state.board_state(3, 7) = black_rook;
+                game_state.black_king_x = 2;
+                game_state.black_king_y = 7;
+            }
+            else {
+                // black king
+                piece0 = empty;
+                game_state.board_state(7, 7) = empty;
+                game_state.board_state(6, 7) = black_king;
+                game_state.board_state(5, 7) = black_rook;
+                game_state.black_king_x = 6;
+                game_state.black_king_y = 7;
+            }
+            game_state.board_state.black_castle_queen = false;
+            game_state.board_state.black_castle_king = false;
+        }
+    }
+    else if(op.category == Operation::Category::promote) {
+        auto& piece1 = game_state.board_state(op.x1, op.y1);
+        piece1 = piece0;
+        piece0 = empty;
+    }
+
+}
+
+
+// This function generates all valid moves without checking king checked
+// status.
+//
+// Func: function type with signature (Operation) -> void
+template< typename Func >
+inline void pseudo_valid_operation_generator(const GameState& game_state, Func&& func) {
+    using enum Occupation;
+
+    const auto validate_and_run_func = [&](Operation op) {
+        if(validate_operation(game_state, op).okay) {
+            func(op);
+        }
+    };
+
+    const auto gen_move = [&](int x, int y, int dx, int dy) {
+        validate_and_run_func(
+            Operation { Operation::Category::move, x, y, x + dx, y + dy }
+        );
+    };
+    const auto gen_dir_move = [&](int x, int y, int x_dir, int y_dir) {
+        for(int step = 1; step < BoardState::max_side_size; ++step) {
+            gen_move(x, y, step * x_dir, step * y_dir);
+        }
+    };
+    const auto gen_diag_move = [&](int x, int y) {
+        gen_dir_move(x, y, 1, 1);
+        gen_dir_move(x, y, -1, 1);
+        gen_dir_move(x, y, -1, -1);
+        gen_dir_move(x, y, 1, -1);
+    };
+    const auto gen_cross_move = [&](int x, int y) {
+        gen_dir_move(x, y, 1, 0);
+        gen_dir_move(x, y, 0, 1);
+        gen_dir_move(x, y, -1, 0);
+        gen_dir_move(x, y, 0, -1);
+    };
+
+    for(int i = 0; i < BoardState::size; ++i) {
+        const auto piece = game_state.board_state.board[i];
+        if(black_turn ? is_black_piece(piece) : is_white_piece(piece)) {
+            const int [x, y] = BoardState::index_to_coord(i);
+
+            switch(piece) {
+                case white_king: [[fallthrough]];
+                case black_king:
+
+                    // generate move
+                    for(int dx = -1; dx <= 1; ++dx) for(int dy = -1; dy <= 1; ++dy) if(dx || dy) {
+                        gen_move(x, y, dx, dy);
+                    }
+                    // generate castle
+                    if(piece == white_king && x == 4 && y == 0) {
+                        validate_and_run_func(Operation { Operation::Category::castle, 4, 0, 2, 0 });
+                        validate_and_run_func(Operation { Operation::Category::castle, 4, 0, 6, 0 });
+                    }
+                    if(piece == black_king && x == 4 && y == 7) {
+                        validate_and_run_func(Operation { Operation::Category::castle, 4, 7, 2, 7 });
+                        validate_and_run_func(Operation { Operation::Category::castle, 4, 7, 6, 7 });
+                    }
+                    break;
+
+                case white_queen: [[fallthrough]];
+                case black_queen:
+
+                    // generate move
+                    gen_cross_move(x, y);
+                    gen_diag_move(x, y);
+                    break;
+
+                case white_rook: [[fallthrough]];
+                case black_rook:
+
+                    gen_cross_move(x, y);
+                    break;
+
+                case white_bishop: [[fallthrough]];
+                case black_bishop:
+
+                    gen_diag_move(x, y);
+                    break;
+
+                case white_knight: [[fallthrough]];
+                case black_knight:
+
+                    gen_move(x, y, 2, 1);
+                    gen_move(x, y, 1, 2);
+                    gen_move(x, y, -1, 2);
+                    gen_move(x, y, -2, 1);
+                    gen_move(x, y, -2, -1);
+                    gen_move(x, y, -1, -2);
+                    gen_move(x, y, 1, -2);
+                    gen_move(x, y, 2, -1);
+                    break;
+
+                case white_pawn_init:
+                    gen_move(x, y, 0, 2);
+                    [[fallthrough]];
+
+                case white_pawn:
+
+                    gen_move(x, y, -1, 1);
+                    gen_move(x, y, 0, 1);
+                    gen_move(x, y, 1, 1);
+                    break;
+
+                case black_pawn_init:
+                    gen_move(x, y, 0, -2);
+                    [[fallthrough]];
+
+                case black_pawn:
+
+                    gen_move(x, y, -1, -1);
+                    gen_move(x, y, 0, -1);
+                    gen_move(x, y, 1, -1);
+                    break;
+
+            }
+        }
+    }
+}
+
+
 
 // game procedure specification
 
-// GetOp: function type that returns an Operation
+// GetOp: function type that has signature () -> Operation
 template< typename GetOp >
-inline void game_procedure() {}
+inline GameState game_round(const GameState& game_state, GetOp&& get_op) {
+    using enum Occupation;
+
+    const Operation op = get_op();
+
+    //---------------------------------
+    // operation pre-validation
+    //---------------------------------
+    const auto op_validation = validate_operation(game_state, op);
+    if(!op_validation.okay) {
+        std::cout << "Invalid operation: " << op_validation.error_message << std::endl;
+        return game_state;
+    }
+
+    //---------------------------------
+    // apply the operation
+    //---------------------------------
+
+    auto new_game_state = game_state;
+    apply_operation_in_place(new_game_state, op);
+
+    //---------------------------------
+    // post validation
+    //---------------------------------
+    // check whether king is under attack
+    {
+        const auto friend_king_x = new_game_state.black_turn ? new_game_state.black_king_x : new_game_state.white_king_x;
+        const auto friend_king_y = new_game_state.black_turn ? new_game_state.black_king_y : new_game_state.white_king_y;
+        if(new_game_state.board_state.position_attacked(friend_king_x, friend_king_y, !new_game_state.black_turn)) {
+            std::cout << "Invalid operation: king will be attacked." << std::endl;
+            // reject new game state
+            return game_state;
+        }
+    }
+
+    //---------------------------------
+    // post processing
+    //---------------------------------
+
+    // update check status
+    {
+        const auto enemy_king_x = new_game_state.black_turn ? new_game_state.white_king_x : new_game_state.black_king_x;
+        const auto enemy_king_y = new_game_state.black_turn ? new_game_state.white_king_y : new_game_state.black_king_y;
+        new_game_state.check = new_game_state.board_state.position_attacked(enemy_king_x, enemy_king_y, new_game_state.black_turn);
+    }
+
+    // check whether opponent can make any valid move
+
+    //---------------------------------
+    // prepare for next turn
+    //---------------------------------
+
+    new_game_state.black_turn = !game_state.black_turn;
+
+    // refresh pawn state
+    for(auto& p : new_game_state.board_state.board) {
+        if(p == (new_game_state.black_turn ? black_pawn_init : white_pawn_ep)) {
+            p = (new_game_state.black_turn ? black_pawn : white_pawn);
+        }
+    }
+
+    return new_game_state;
+}
+
 
 } // namespace chess
 
