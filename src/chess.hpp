@@ -213,6 +213,11 @@ struct GameState {
     int        black_king_y = 0;
     bool       check = false;
     Status     status = Status::active;
+
+    int        friend_king_x() const { return black_turn ? black_king_x : white_king_x; }
+    int        friend_king_y() const { return black_turn ? black_king_y : white_king_y; }
+    int        enemy_king_x() const { return black_turn ? white_king_x : black_king_x; }
+    int        enemy_king_y() const { return black_turn ? white_king_y : black_king_y; }
 };
 
 constexpr GameState game_standard_opening() {
@@ -226,14 +231,14 @@ constexpr GameState game_standard_opening() {
     state(2, 0) = state(5, 0) = white_bishop;
     state(3, 0) = white_queen;
     state(4, 0) = white_king;
-    for(int i = 0; i < BoardState::width; ++i) state(i, 1) = white_pawn;
+    for(int i = 0; i < BoardState::width; ++i) state(i, 1) = white_pawn_init;
 
     state(0, 7) = state(7, 7) = black_rook;
     state(1, 7) = state(6, 7) = black_knight;
     state(2, 7) = state(5, 7) = black_bishop;
     state(3, 7) = black_queen;
     state(4, 7) = black_king;
-    for(int i = 0; i < BoardState::width; ++i) state(i, 6) = black_pawn;
+    for(int i = 0; i < BoardState::width; ++i) state(i, 6) = black_pawn_init;
 
     game_state.black_turn = false;
     game_state.white_king_x = 4;
@@ -719,6 +724,9 @@ inline void apply_operation_in_place(GameState& game_state, Operation op) {
 // status.
 //
 // Func: function type with signature (Operation) -> void
+//
+// Note:
+//   - This function does not generate promotion operation for pawns
 template< typename Func >
 inline void pseudo_valid_operation_generator(const GameState& game_state, Func&& func) {
     using enum Occupation;
@@ -754,8 +762,8 @@ inline void pseudo_valid_operation_generator(const GameState& game_state, Func&&
 
     for(int i = 0; i < BoardState::size; ++i) {
         const auto piece = game_state.board_state.board[i];
-        if(black_turn ? is_black_piece(piece) : is_white_piece(piece)) {
-            const int [x, y] = BoardState::index_to_coord(i);
+        if(game_state.black_turn ? is_black_piece(piece) : is_white_piece(piece)) {
+            const auto [x, y] = BoardState::index_to_coord(i);
 
             switch(piece) {
                 case white_king: [[fallthrough]];
@@ -836,7 +844,22 @@ inline void pseudo_valid_operation_generator(const GameState& game_state, Func&&
     }
 }
 
+inline int count_valid_operations(const GameState& game_state) {
+    int count = 0;
 
+    pseudo_valid_operation_generator(
+        game_state,
+        [&](Operation op) {
+            auto new_game_state = game_state;
+            apply_operation_in_place(new_game_state, op);
+
+            if(!new_game_state.board_state.position_attacked(new_game_state.friend_king_x(), new_game_state.friend_king_y(), !new_game_state.black_turn)) {
+                ++count;
+            }
+        }
+    );
+    return count;
+}
 
 // game procedure specification
 
@@ -867,39 +890,52 @@ inline GameState game_round(const GameState& game_state, GetOp&& get_op) {
     // post validation
     //---------------------------------
     // check whether king is under attack
-    {
-        const auto friend_king_x = new_game_state.black_turn ? new_game_state.black_king_x : new_game_state.white_king_x;
-        const auto friend_king_y = new_game_state.black_turn ? new_game_state.black_king_y : new_game_state.white_king_y;
-        if(new_game_state.board_state.position_attacked(friend_king_x, friend_king_y, !new_game_state.black_turn)) {
-            std::cout << "Invalid operation: king will be attacked." << std::endl;
-            // reject new game state
-            return game_state;
-        }
+    if(new_game_state.board_state.position_attacked(new_game_state.friend_king_x(), new_game_state.friend_king_y(), !new_game_state.black_turn)) {
+        std::cout << "Invalid operation: king will be attacked." << std::endl;
+        // reject new game state
+        return game_state;
     }
+
 
     //---------------------------------
     // post processing
     //---------------------------------
 
     // update check status
-    {
-        const auto enemy_king_x = new_game_state.black_turn ? new_game_state.white_king_x : new_game_state.black_king_x;
-        const auto enemy_king_y = new_game_state.black_turn ? new_game_state.white_king_y : new_game_state.black_king_y;
-        new_game_state.check = new_game_state.board_state.position_attacked(enemy_king_x, enemy_king_y, new_game_state.black_turn);
-    }
+    new_game_state.check = new_game_state.board_state.position_attacked(new_game_state.enemy_king_x(), new_game_state.enemy_king_y(), new_game_state.black_turn);
 
-    // check whether opponent can make any valid move
+    new_game_state.black_turn = !game_state.black_turn;
+
+    // check whether this player can make any valid move
+    const int num_valid_op = count_valid_operations(new_game_state);
+    if(num_valid_op == 0) {
+        if(new_game_state.check) {
+            // checkmate, the opponent (ie the player of this function) wins
+            new_game_state.status = new_game_state.black_turn ? GameState::Status::white_win : GameState::Status::black_win;
+        }
+        else {
+            // stalemate, draw
+            new_game_state.status = GameState::Status::draw;
+        }
+
+        return new_game_state;
+    }
 
     //---------------------------------
     // prepare for next turn
     //---------------------------------
 
-    new_game_state.black_turn = !game_state.black_turn;
-
     // refresh pawn state
-    for(auto& p : new_game_state.board_state.board) {
-        if(p == (new_game_state.black_turn ? black_pawn_init : white_pawn_ep)) {
-            p = (new_game_state.black_turn ? black_pawn : white_pawn);
+    {
+        const int y_lo = new_game_state.black_turn ? 0 : 2;
+        const int y_hi = new_game_state.black_turn ? 5 : 7;
+        for(int y = y_lo; y <= y_hi; ++y) {
+            for(int x = 0; x < BoardState::width; ++x) {
+                auto& p = new_game_state.board_state(x, y);
+                if(p == (new_game_state.black_turn ? black_pawn_init : white_pawn_init)) {
+                    p = (new_game_state.black_turn ? black_pawn : white_pawn);
+                }
+            }
         }
     }
 
