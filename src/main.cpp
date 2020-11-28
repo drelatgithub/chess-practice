@@ -39,7 +39,7 @@ int main() {
         if(words[0] == "help") {
             cout
                 << "    move: mv <source> <dst> [<promote>]\n"
-                << "        promotion can be one of (q)ueen, (r)ook, (b)ishop, (k)night\n"
+                << "        promotion can be one of (q)ueen, (r)ook, (b)ishop, k(n)ight\n"
                 << "        example: mv e2 e4\n"
                 << "        example: mv a7 a8 q\n"
                 << "    castle: <0-0 (king side) or 0-0-0 (queen side)>\n"
@@ -94,7 +94,7 @@ int main() {
                             op.code = underlying(gs.black_turn ? Occupation::black_rook : Occupation::white_rook);
                         } else if(p == 'b') {
                             op.code = underlying(gs.black_turn ? Occupation::black_bishop : Occupation::white_bishop);
-                        } else if(p == 'k') {
+                        } else if(p == 'n') {
                             op.code = underlying(gs.black_turn ? Occupation::black_knight : Occupation::white_knight);
                         } else {
                             cout << "Unrecognized promotion " << p << endl;

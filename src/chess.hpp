@@ -229,8 +229,22 @@ struct GameState {
                     : status == Status::black_win ? "black wins"
                     : "draw"
             ) << '\n'
-            << "white king at (" << white_king_x << ", " << white_king_y << ")\n"
-            << "black king at (" << black_king_x << ", " << black_king_y << ")\n"
+            << "white: king at " << (char)(white_king_x + 'a') << (char)(white_king_y + '1')
+                << " castle "
+                << (
+                    board_state.white_castle_queen
+                        ? (board_state.white_castle_king ? "both" : "queen")
+                        : (board_state.white_castle_king ? "king" : "none")
+                )
+                << "\n"
+            << "black: king at " << (char)(black_king_x + 'a') << (char)(black_king_y + '1')
+                << " castle "
+                << (
+                    board_state.black_castle_queen
+                        ? (board_state.black_castle_king ? "both" : "queen")
+                        : (board_state.black_castle_king ? "king" : "none")
+                )
+                << "\n"
             << "checked: " << check << '\n'
             << "\n";
 
