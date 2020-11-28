@@ -131,31 +131,37 @@ struct BoardState {
         const auto enemy_bishop = by_black ? black_bishop : white_bishop;
         const auto enemy_rook = by_black ? black_rook : white_rook;
         const auto enemy_queen = by_black ? black_queen : white_queen;
-        const auto has_enemy_diag = [&, this](int nx, int ny) {
-            if(is_location_valid(nx, ny)) {
-                const auto o = (*this)(nx, ny);
-                return o == enemy_bishop || o == enemy_queen;
+        const auto is_diag_enemy = [&](Occupation o) { return o == enemy_bishop || o == enemy_queen; };
+        const auto is_cross_enemy = [&](Occupation o) { return o == enemy_rook || o == enemy_queen; };
+
+        const auto has_enemy_dir = [&, this](int x_dir, int y_dir, auto&& pred_o) -> bool {
+            for(int step = 1; step < max_side_size; ++step) {
+                const int nx = x + step * x_dir;
+                const int ny = y + step * y_dir;
+                if(is_location_valid(nx, ny)) {
+                    const auto o = (*this)(nx, ny);
+                    if(o != Occupation::empty) {
+                        return pred_o(o);
+                    }
+                } else {
+                    // out of bound, terminate diag search
+                    return false;
+                }
             }
             return false;
         };
-        const auto has_enemy_cross = [&, this](int nx, int ny) {
-            if(is_location_valid(nx, ny)) {
-                const auto o = (*this)(nx, ny);
-                return o == enemy_rook || o == enemy_queen;
-            }
-            return false;
-        };
-        for(int step = 1; step < max_side_size; ++step) {
-            if(
-                has_enemy_diag(x+step, y+step) ||
-                has_enemy_diag(x-step, y+step) ||
-                has_enemy_diag(x-step, y-step) ||
-                has_enemy_diag(x+step, y-step) ||
-                has_enemy_cross(x+step, y) ||
-                has_enemy_cross(x, y+step) ||
-                has_enemy_cross(x-step, y) ||
-                has_enemy_cross(x, y-step)
-            ) return true;
+        if(
+            has_enemy_dir(1, 1, is_diag_enemy)
+            || has_enemy_dir(-1, 1, is_diag_enemy)
+            || has_enemy_dir(-1, -1, is_diag_enemy)
+            || has_enemy_dir(1, -1, is_diag_enemy)
+
+            || has_enemy_dir(1, 0, is_cross_enemy)
+            || has_enemy_dir(0, 1, is_cross_enemy)
+            || has_enemy_dir(-1, 0, is_cross_enemy)
+            || has_enemy_dir(0, -1, is_cross_enemy)
+        ) {
+            return true;
         }
 
         const auto has_enemy_knight = [&, this](int nx, int ny) {
