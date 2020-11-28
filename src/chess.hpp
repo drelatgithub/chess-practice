@@ -74,7 +74,7 @@ struct BoardState {
 
 
     static constexpr bool is_location_valid(int x, int y) {
-        return 0 <= x && x <= width && 0 <= y && y <= height;
+        return 0 <= x && x < width && 0 <= y && y < height;
     }
     static constexpr auto coord_to_index(int x, int y) {
         return width * y + x;
@@ -218,6 +218,24 @@ struct GameState {
     int        friend_king_y() const { return black_turn ? black_king_y : white_king_y; }
     int        enemy_king_x() const { return black_turn ? white_king_x : black_king_x; }
     int        enemy_king_y() const { return black_turn ? white_king_y : black_king_y; }
+
+    void pretty_print_to(std::ostream& os) const {
+        os
+            << "game status: "
+            << (
+                status == Status::active
+                    ? (black_turn ? "black turn" : "white turn")
+                    : status == Status::white_win ? "white wins"
+                    : status == Status::black_win ? "black wins"
+                    : "draw"
+            ) << '\n'
+            << "white king at (" << white_king_x << ", " << white_king_y << ")\n"
+            << "black king at (" << black_king_x << ", " << black_king_y << ")\n"
+            << "checked: " << check << '\n'
+            << "\n";
+
+        board_state.pretty_print_to(os);
+    }
 };
 
 constexpr GameState game_standard_opening() {
@@ -257,9 +275,9 @@ struct Operation {
     enum class Category {
         move, castle, promote
     };
-    Category category;
-    int x0, y0;
-    int x1, y1;
+    Category category = Category::move;
+    int x0 = 0, y0 = 0;
+    int x1 = 0, y1 = 0;
 
     // Special number for category
     //
