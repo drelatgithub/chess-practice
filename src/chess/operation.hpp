@@ -16,16 +16,26 @@ namespace chess {
 
 struct Operation {
     enum class Category {
-        move, castle, promote
+        move, castle, promote, resign, draw_accept
     };
+    inline static constexpr int code2_normal     = 0;
+    inline static constexpr int code2_draw_offer = 1;
+    inline static constexpr int code2_draw_claim = 2;
+
     Category category = Category::move;
     int x0 = 0, y0 = 0;
     int x1 = 0, y1 = 0;
 
-    // Special number for category
-    //
+    // Special numbers for different category
+
     // promote: index of promoted piece
     int code = 0;
+
+    // move/castle/promote:
+    //   0: normal
+    //   1: draw offer
+    //   2: draw claim
+    int code2 = code2_normal;
 };
 
 struct OperationValidationResult {
@@ -38,10 +48,26 @@ struct OperationValidationResult {
 // Note:
 //   - This function does not check whether the move would leave the king in a
 //     checked state.
+//   - This function does not check whether a draw claim is valid.
 inline auto validate_operation(const GameState& game_state, Operation op) {
     using enum Occupation;
 
     const bool black_turn = game_state.board_state.black_turn;
+
+    // early termination with special categories
+    if(op.category == Operation::Category::resign) {
+        return OperationValidationResult { true };
+    }
+    else if(op.category == Operation::Category::draw_accept) {
+        if(game_state.draw_offer) {
+            return OperationValidationResult { true };
+        }
+        else {
+            return OperationValidationResult { false, "Draw not offered." };
+        }
+    }
+
+
     auto occu_before = game_state.board_state(op.x0, op.y0);
 
     if(occu_before == empty) {
@@ -382,8 +408,14 @@ inline auto apply_operation_in_place(
 
     const auto piece0 = board_state(op.x0, op.y0);
 
+    // reset draw offer
+    game_state.draw_offer = false;
     // reset en passant column
     aux_hash_set_en_passant_column(board_state_hash, board_state, hash_table, -1);
+
+    // event flags
+    bool pawn_moved = false;
+    bool capture_made = false;
 
     if(op.category == Operation::Category::move) {
         const auto piece1 = board_state(op.x1, op.y1);
@@ -394,6 +426,7 @@ inline auto apply_operation_in_place(
             if(piece1 == empty && op.x0 != op.x1) {
                 // captured
                 set_piece(op.x1, op.y0, empty);
+                capture_made = true;
             }
             // initial skip
             if(abs(op.y1 - op.y0) == 2) {
@@ -407,6 +440,8 @@ inline auto apply_operation_in_place(
                     aux_hash_set_en_passant_column(board_state_hash, board_state, hash_table, op.x0);
                 }
             }
+
+            pawn_moved = true;
         }
 
         // castle disabling
@@ -431,8 +466,16 @@ inline auto apply_operation_in_place(
             game_state.black_king_y = op.y1;
         }
 
+        // check capture
+        if(piece1 != empty) { capture_made = true; }
+
         set_piece(op.x1, op.y1, piece0);
         set_piece(op.x0, op.y0, empty);
+
+        // draw offer
+        if(op.code2 == Operation::code2_draw_offer) {
+            game_state.draw_offer = true;
+        }
 
     }
     else if(op.category == Operation::Category::castle) {
@@ -480,10 +523,36 @@ inline auto apply_operation_in_place(
             disable_black_castle_queen();
             disable_black_castle_king();
         }
+
+        // draw offer
+        if(op.code2 == Operation::code2_draw_offer) {
+            game_state.draw_offer = true;
+        }
     }
     else if(op.category == Operation::Category::promote) {
+        pawn_moved = true;
+        if(board_state(op.x1, op.y1) != empty) { capture_made = true; }
+
         set_piece(op.x1, op.y1, static_cast<Occupation>(op.code));
         set_piece(op.x0, op.y0, empty);
+
+        // draw offer
+        if(op.code2 == Operation::code2_draw_offer) {
+            game_state.draw_offer = true;
+        }
+    }
+    else if(op.category == Operation::Category::resign) {
+        game_state.status = black_turn ? GameState::Status::white_win : GameState::Status::black_win;
+    }
+    else if(op.category == Operation::Category::draw_accept) {
+        game_state.status = GameState::Status::draw;
+    }
+
+
+    if(pawn_moved || capture_made) {
+        game_state.no_capture_no_pawn_move_streak = 0;
+    } else {
+        ++game_state.no_capture_no_pawn_move_streak;
     }
 
     return board_state_hash;
@@ -635,10 +704,12 @@ inline int count_valid_operations(
 
 // GetOp: function type that has signature () -> Operation
 //
-// Returns the new board state hash.
+// Returns the new board state hash if operation is valid.
 //
 // Note:
-//   - New game state will be pushed only if the operation is valid.
+//   - New game state will be pushed only if the operation is valid. Otherwise,
+//     no progress will be made in game.
+//   - If the operation is invalid, the original board_state_hash is returned.
 template< typename GetOp >
 inline auto game_round(GameHistory& game_history, BoardStateZobristTable::HashInt board_state_hash, GetOp&& get_op) {
     using enum Occupation;
@@ -671,11 +742,39 @@ inline auto game_round(GameHistory& game_history, BoardStateZobristTable::HashIn
     //---------------------------------
     // post validation
     //---------------------------------
-    // check whether king is under attack
-    if(new_game_state.board_state.position_attacked(new_game_state.friend_king_x(), new_game_state.friend_king_y(), !new_game_state.board_state.black_turn)) {
-        std::cout << "Invalid operation: king will be attacked." << std::endl;
-        // reject new game state
-        return board_state_hash;
+    if(new_game_state.status == GameState::Status::active) {
+        // check whether king is under attack
+        if(new_game_state.board_state.position_attacked(new_game_state.friend_king_x(), new_game_state.friend_king_y(), !new_game_state.board_state.black_turn)) {
+            std::cout << "Invalid operation: king will be attacked." << std::endl;
+            // reject new game state
+            return board_state_hash;
+        }
+
+    }
+
+    // toggle turn
+    aux_hash_set_bool(new_board_state_hash, new_game_state.board_state.black_turn, game_history.zobrist_table.black_turn, !new_game_state.board_state.black_turn);
+
+    const int num_repetition = game_history.count_board_state_repetition(new_game_state.board_state, new_board_state_hash);
+
+    if(new_game_state.status == GameState::Status::active) {
+        // check whether draw claim is valid
+        if(op.code2 == Operation::code2_draw_claim) {
+            if(
+                // threefold repetition
+                num_repetition >= 3
+                // fifty-move
+                || new_game_state.no_capture_no_pawn_move_streak >= 100
+            ) {
+                // draw claim is valid, game ends in draw
+                new_game_state.status = GameState::Status::draw;
+            }
+            else {
+                // draw claim invalid
+                std::cout << "Invalid operation: cannot claim draw." << std::endl;
+                return board_state_hash;
+            }
+        }
     }
 
 
@@ -683,22 +782,33 @@ inline auto game_round(GameHistory& game_history, BoardStateZobristTable::HashIn
     // post processing
     //---------------------------------
 
-    // update check status
-    new_game_state.check = new_game_state.board_state.position_attacked(new_game_state.enemy_king_x(), new_game_state.enemy_king_y(), new_game_state.board_state.black_turn);
+    if(new_game_state.status == GameState::Status::active) {
 
-    // toggle turn
-    aux_hash_set_bool(new_board_state_hash, new_game_state.board_state.black_turn, game_history.zobrist_table.black_turn, !new_game_state.board_state.black_turn);
+        // update check status
+        new_game_state.check = new_game_state.board_state.position_attacked(new_game_state.friend_king_x(), new_game_state.friend_king_y(), !new_game_state.board_state.black_turn);
 
-    // check whether this player can make any valid move
-    const int num_valid_op = count_valid_operations(new_game_state, game_history.zobrist_table, new_board_state_hash);
-    if(num_valid_op == 0) {
-        if(new_game_state.check) {
-            // checkmate, the opponent (ie the player of this function) wins
-            new_game_state.status = new_game_state.board_state.black_turn ? GameState::Status::white_win : GameState::Status::black_win;
+        // check whether this player can make any valid move
+        const int num_valid_op = count_valid_operations(new_game_state, game_history.zobrist_table, new_board_state_hash);
+        if(num_valid_op == 0) {
+            if(new_game_state.check) {
+                // checkmate, the opponent (ie the player of this function) wins
+                new_game_state.status = new_game_state.board_state.black_turn ? GameState::Status::white_win : GameState::Status::black_win;
+            }
+            else {
+                // stalemate, draw
+                new_game_state.status = GameState::Status::draw;
+            }
         }
         else {
-            // stalemate, draw
-            new_game_state.status = GameState::Status::draw;
+            // check special draw status
+            if(
+                // fivefold repetition
+                num_repetition >= 5
+                // 75-move
+                || new_game_state.no_capture_no_pawn_move_streak >= 150
+            ) {
+                new_game_state.status = GameState::Status::draw;
+            }
         }
     }
 

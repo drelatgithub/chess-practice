@@ -321,6 +321,8 @@ struct GameState {
     };
 
     BoardState board_state;
+    bool       draw_offer = false;
+    int        no_capture_no_pawn_move_streak = 0;
 
     // generated state
     int        white_king_x = 0;

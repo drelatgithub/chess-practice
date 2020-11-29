@@ -24,6 +24,7 @@ int main() {
         if(print_status) {
             gs.pretty_print_to(cout);
             cout << "board hash: " << board_state_hash << '\n';
+            cout << "board repetition: " << gh.count_board_state_repetition(gs.board_state, board_state_hash) << '\n';
             cout << endl;
         }
         print_status = false;
@@ -46,12 +47,15 @@ int main() {
 
         if(words[0] == "help") {
             cout
-                << "    move: mv <source> <dst> [<promote>]\n"
-                << "        promotion can be one of (q)ueen, (r)ook, (b)ishop, k(n)ight\n"
+                << "    move: mv/dcmv/domv <source> <dst> [<promote>]\n"
+                << "        Promotion can be one of (q)ueen, (r)ook, (b)ishop, k(n)ight\n"
+                << "        Use dcmv to make a draw claim, and domv to make a draw offer.\n"
                 << "        example: mv e2 e4\n"
                 << "        example: mv a7 a8 q\n"
                 << "    castle: <0-0 (king side) or 0-0-0 (queen side)>\n"
                 << "        example: 0-0-0\n"
+                << "    draw accept: da\n"
+                << "    resign: resign\n"
                 << "\n"
                 << "    print board: show\n"
                 << "    quit: exit\n"
@@ -63,7 +67,31 @@ int main() {
             continue;
         }
 
-        if(words[0] == "mv") {
+        if(words[0] == "resign") {
+            board_state_hash = game_round(
+                gh,
+                board_state_hash,
+                [&]() {
+                    return Operation { Operation::Category::resign };
+                }
+            );
+        }
+        else if(words[0] == "da") {
+            board_state_hash = game_round(
+                gh,
+                board_state_hash,
+                [&]() {
+                    return Operation { Operation::Category::draw_accept };
+                }
+            );
+        }
+
+        else if(words[0] == "mv" || words[0] == "dcmv" || words[0] == "domv") {
+            int code2 = 
+                words[0] == "dcmv" ? Operation::code2_draw_claim
+                : words[0] == "domv" ? Operation::code2_draw_offer
+                : Operation::code2_normal;
+
             if(words.size() < 3 || words.size() > 4) {
                 cout << "Invalid mv command." << endl;
             }
@@ -76,6 +104,7 @@ int main() {
                     else return {{ s[0] - 'a', s[1] - '1' }};
                 };
                 Operation op { Operation::Category::move };
+                op.code2 = code2;
                 const auto src = get_coord(words[1]);
                 if(src.has_value()) {
                     tie(op.x0, op.y0) = *src;
@@ -154,6 +183,11 @@ int main() {
             continue;
         }
 
+    }
+
+    if(gh.history.back().status != GameState::Status::active) {
+        gh.history.back().pretty_print_to(cout);
+        cout << endl;
     }
 
     return 0;
