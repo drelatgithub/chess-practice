@@ -11,26 +11,23 @@ int main() {
     using namespace chess;
 
     GameHistory gh;
-    auto gs_init = game_standard_opening();
-    auto board_state_hash = chess::hash(gs_init.board_state, gh.zobrist_table);
-    gh.push_game_state(gs_init, board_state_hash);
+    const auto gs = [&]() -> const GameState& { return gh.ptr_current_item()->game_state; };
+    const auto bh = [&] { return gh.ptr_current_item()->board_state_hash; };
 
     bool print_status = true;
 
-    while(gh.history.back().status == GameState::Status::active) {
-
-        auto& gs = gh.history.back();
+    while(gs().status == GameState::Status::active) {
 
         if(print_status) {
-            gs.pretty_print_to(cout);
-            cout << "board hash: " << board_state_hash << '\n';
-            cout << "board repetition: " << gh.count_board_state_repetition(gs.board_state, board_state_hash) << '\n';
+            gs().pretty_print_to(cout);
+            cout << "board hash: " << bh() << '\n';
+            cout << "board repetition: " << gh.count_board_state_repetition(gs().board_state, bh()) << '\n';
             cout << endl;
         }
         print_status = false;
 
         // prompt for input
-        cout << (gs.board_state.black_turn ? "(black turn)" : "(white turn)") << " > " << flush;
+        cout << (gs().board_state.black_turn ? "(black turn)" : "(white turn)") << " > " << flush;
 
         // parse input
         string line;
@@ -68,21 +65,15 @@ int main() {
         }
 
         if(words[0] == "resign") {
-            board_state_hash = game_round(
+            game_round(
                 gh,
-                board_state_hash,
-                [&]() {
-                    return Operation { Operation::Category::resign };
-                }
+                Operation { Operation::Category::resign }
             );
         }
         else if(words[0] == "da") {
-            board_state_hash = game_round(
+            game_round(
                 gh,
-                board_state_hash,
-                [&]() {
-                    return Operation { Operation::Category::draw_accept };
-                }
+                Operation { Operation::Category::draw_accept }
             );
         }
 
@@ -126,13 +117,13 @@ int main() {
                         op.category = Operation::Category::promote;
                         const char p = words[3][0];
                         if(p == 'q') {
-                            op.code = underlying(gs.board_state.black_turn ? Occupation::black_queen : Occupation::white_queen);
+                            op.code = underlying(gs().board_state.black_turn ? Occupation::black_queen : Occupation::white_queen);
                         } else if(p == 'r') {
-                            op.code = underlying(gs.board_state.black_turn ? Occupation::black_rook : Occupation::white_rook);
+                            op.code = underlying(gs().board_state.black_turn ? Occupation::black_rook : Occupation::white_rook);
                         } else if(p == 'b') {
-                            op.code = underlying(gs.board_state.black_turn ? Occupation::black_bishop : Occupation::white_bishop);
+                            op.code = underlying(gs().board_state.black_turn ? Occupation::black_bishop : Occupation::white_bishop);
                         } else if(p == 'n') {
-                            op.code = underlying(gs.board_state.black_turn ? Occupation::black_knight : Occupation::white_knight);
+                            op.code = underlying(gs().board_state.black_turn ? Occupation::black_knight : Occupation::white_knight);
                         } else {
                             cout << "Unrecognized promotion " << p << endl;
                             continue;
@@ -140,40 +131,30 @@ int main() {
                     }
                 }
 
-                board_state_hash = game_round(
-                    gh,
-                    board_state_hash,
-                    [&]() { return op; }
-                );
+                game_round(gh, op);
                 print_status = true;
             }
         }
         else if(words[0] == "0-0") {
-            const int king_y = gs.board_state.black_turn ? 7 : 0;
-            board_state_hash = game_round(
+            const int king_y = gs().board_state.black_turn ? 7 : 0;
+            game_round(
                 gh,
-                board_state_hash,
-                [&]() {
-                    return Operation {
-                        Operation::Category::castle,
-                        4, king_y,
-                        6, king_y
-                    };
+                Operation {
+                    Operation::Category::castle,
+                    4, king_y,
+                    6, king_y
                 }
             );
             print_status = true;
         }
         else if(words[0] == "0-0-0") {
-            const int king_y = gs.board_state.black_turn ? 7 : 0;
-            board_state_hash = game_round(
+            const int king_y = gs().board_state.black_turn ? 7 : 0;
+            game_round(
                 gh,
-                board_state_hash,
-                [&]() {
-                    return Operation {
-                        Operation::Category::castle,
-                        4, king_y,
-                        2, king_y
-                    };
+                Operation {
+                    Operation::Category::castle,
+                    4, king_y,
+                    2, king_y
                 }
             );
             print_status = true;
@@ -185,8 +166,8 @@ int main() {
 
     }
 
-    if(gh.history.back().status != GameState::Status::active) {
-        gh.history.back().pretty_print_to(cout);
+    if(gs().status != GameState::Status::active) {
+        gs().pretty_print_to(cout);
         cout << endl;
     }
 

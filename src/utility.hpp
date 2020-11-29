@@ -6,6 +6,15 @@
 
 namespace chess {
 
+// debug
+
+#ifdef NDEBUG
+constexpr bool debug = false;
+#else
+constexpr bool debug = true;
+#endif
+
+
 // concepts
 
 template< typename T >

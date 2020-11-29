@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <iostream>
 #include <ranges>
+#include <stdexcept>
 #include <tuple>
 #include <unordered_set>
 #include <vector>
@@ -400,72 +401,6 @@ constexpr GameState game_standard_opening() {
 
     return game_state;
 }
-
-
-struct GameHistory {
-
-    struct BoardStateRef {
-        // the hashed value of board
-        BoardStateZobristTable::HashInt hash_res = 0;
-        // the index of the board state in the game state history
-        int                             index = -1;
-    };
-    // equality by hash_res only
-    struct BoardStateRefEqual {
-        constexpr bool operator()(const BoardStateRef& lhs, const BoardStateRef& rhs) const noexcept {
-            return lhs.hash_res == rhs.hash_res;
-        }
-    };
-    // hash by hash_res only
-    struct BoardStateRefHash {
-        constexpr std::size_t operator()(const BoardStateRef& val) const noexcept {
-            return val.hash_res;
-        }
-    };
-
-
-    std::vector< GameState > history;
-
-    // The board state hash.
-    //
-    // Each item refers to the board state corresponding to a game state with
-    // index in the game history.
-    //
-    // The equal range of any key represents the possible range of board states
-    // that may compare equal.
-    std::unordered_multiset<
-        BoardStateRef,
-        BoardStateRefHash,
-        BoardStateRefEqual
-    > board_state_ref;
-
-    // Note:
-    //   - Changing this value may break the board_state_ref multiset.
-    BoardStateZobristTable zobrist_table = BoardStateZobristTable::generate();
-
-    auto hash_board_state(const BoardState& board_state) const {
-        return hash(board_state, zobrist_table);
-    }
-
-    void push_game_state(const GameState& game_state, BoardStateZobristTable::HashInt board_state_hash) {
-        board_state_ref.insert({
-            board_state_hash,
-            static_cast<int>(history.size())
-        });
-        history.push_back(game_state);
-    }
-
-    auto count_board_state_repetition(const BoardState& board_state, BoardStateZobristTable::HashInt board_state_hash) const {
-        const auto same_hash_range = board_state_ref.equal_range({ board_state_hash });
-        return std::ranges::count_if(
-            same_hash_range.first,
-            same_hash_range.second,
-            [&, this](const BoardStateRef& rhs) {
-                return board_state == history[rhs.index].board_state;
-            }
-        );
-    }
-};
 
 
 } // namespace chess

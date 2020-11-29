@@ -16,13 +16,14 @@ namespace chess {
 
 struct Operation {
     enum class Category {
+        none,
         move, castle, promote, resign, draw_accept
     };
     inline static constexpr int code2_normal     = 0;
     inline static constexpr int code2_draw_offer = 1;
     inline static constexpr int code2_draw_claim = 2;
 
-    Category category = Category::move;
+    Category category = Category::none;
     int x0 = 0, y0 = 0;
     int x1 = 0, y1 = 0;
 
@@ -55,7 +56,10 @@ inline auto validate_operation(const GameState& game_state, Operation op) {
     const bool black_turn = game_state.board_state.black_turn;
 
     // early termination with special categories
-    if(op.category == Operation::Category::resign) {
+    if(op.category == Operation::Category::none) {
+        return OperationValidationResult { false, "Null operation not allowed." };
+    }
+    else if(op.category == Operation::Category::resign) {
         return OperationValidationResult { true };
     }
     else if(op.category == Operation::Category::draw_accept) {
@@ -702,26 +706,127 @@ inline int count_valid_operations(
 // game procedure specification
 //-----------------------------------------------------------------------------
 
-// GetOp: function type that has signature () -> Operation
-//
-// Returns the new board state hash if operation is valid.
+
+
+struct GameHistory {
+
+    struct BoardStateRef {
+        // the hashed value of board
+        BoardStateZobristTable::HashInt hash_res = 0;
+        // the index of the board state in the game state history
+        int                             index = -1;
+    };
+    // equality by hash_res only
+    struct BoardStateRefEqual {
+        constexpr bool operator()(const BoardStateRef& lhs, const BoardStateRef& rhs) const noexcept {
+            return lhs.hash_res == rhs.hash_res;
+        }
+    };
+    // hash by hash_res only
+    struct BoardStateRefHash {
+        constexpr std::size_t operator()(const BoardStateRef& val) const noexcept {
+            return val.hash_res;
+        }
+    };
+
+    struct GameHistoryItem {
+        Operation                       op;
+        GameState                       game_state;
+        BoardStateZobristTable::HashInt board_state_hash = 0;
+    };
+
+    std::vector< GameHistoryItem > history;
+
+    // The board state hash.
+    //
+    // Each item refers to the board state corresponding to a game state with
+    // index in the game history.
+    //
+    // The equal range of any key represents the possible range of board states
+    // that may compare equal.
+    std::unordered_multiset<
+        BoardStateRef,
+        BoardStateRefHash,
+        BoardStateRefEqual
+    > board_state_ref;
+
+    // Note:
+    //   - Changing this value may break the board_state_ref multiset.
+    BoardStateZobristTable zobrist_table = BoardStateZobristTable::generate();
+
+    // Default constructor to initialize with the standard opening.
+    GameHistory() {
+        auto new_game_state = game_standard_opening();
+        push_game_state(
+            Operation {},
+            new_game_state,
+            hash_board_state(new_game_state.board_state)
+        );
+    }
+
+    // This function gives the current game_state situation. This function
+    // hides the implementation detail of the history vector. For example, if
+    // the game allows undoing and redoing moves, the current state might be
+    // not at the back of the vector.
+    //
+    // Returns null if there is no current item.
+    auto ptr_current_item() const {
+        return history.empty() ? nullptr : &history.back();
+    }
+
+    BoardStateZobristTable::HashInt hash_board_state(const BoardState& board_state) const {
+        return hash(board_state, zobrist_table);
+    }
+
+    void push_game_state(const Operation& op, const GameState& game_state, BoardStateZobristTable::HashInt board_state_hash) {
+        if constexpr(debug) {
+            if(hash_board_state(game_state.board_state) != board_state_hash) {
+                throw std::logic_error("Board state hash does not match.");
+            }
+        }
+
+        board_state_ref.insert({
+            board_state_hash,
+            static_cast<int>(history.size())
+        });
+        history.push_back({ op, game_state, board_state_hash });
+    }
+
+    auto count_board_state_repetition(const BoardState& board_state, BoardStateZobristTable::HashInt board_state_hash) const {
+        if constexpr(debug) {
+            if(hash_board_state(board_state) != board_state_hash) {
+                throw std::logic_error("Board state hash does not match.");
+            }
+        }
+
+        const auto same_hash_range = board_state_ref.equal_range({ board_state_hash });
+        return std::ranges::count_if(
+            same_hash_range.first,
+            same_hash_range.second,
+            [&, this](const BoardStateRef& rhs) {
+                return board_state == history[rhs.index].game_state.board_state;
+            }
+        );
+    }
+};
+
+
+// Returns whether the operation is valid.
 //
 // Note:
 //   - New game state will be pushed only if the operation is valid. Otherwise,
 //     no progress will be made in game.
-//   - If the operation is invalid, the original board_state_hash is returned.
-template< typename GetOp >
-inline auto game_round(GameHistory& game_history, BoardStateZobristTable::HashInt board_state_hash, GetOp&& get_op) {
+inline bool game_round(GameHistory& game_history, const Operation& op) {
     using enum Occupation;
 
-    if(game_history.history.empty()) {
-        std::cout << "Game history is not initialized." << std::endl;
-        return board_state_hash;
+    auto p_current_item = game_history.ptr_current_item();
+    if(p_current_item == nullptr) {
+        std::cout << "Game history is empty." << std::endl;
+        return false;
     }
 
-    const auto& game_state = game_history.history.back();
-
-    const Operation op = get_op();
+    const auto& game_state       = p_current_item->game_state;
+    const auto  board_state_hash = p_current_item->board_state_hash;
 
     //---------------------------------
     // operation pre-validation
@@ -729,7 +834,7 @@ inline auto game_round(GameHistory& game_history, BoardStateZobristTable::HashIn
     const auto op_validation = validate_operation(game_state, op);
     if(!op_validation.okay) {
         std::cout << "Invalid operation: " << op_validation.error_message << std::endl;
-        return board_state_hash;
+        return false;
     }
 
     //---------------------------------
@@ -747,7 +852,7 @@ inline auto game_round(GameHistory& game_history, BoardStateZobristTable::HashIn
         if(new_game_state.board_state.position_attacked(new_game_state.friend_king_x(), new_game_state.friend_king_y(), !new_game_state.board_state.black_turn)) {
             std::cout << "Invalid operation: king will be attacked." << std::endl;
             // reject new game state
-            return board_state_hash;
+            return false;
         }
 
     }
@@ -772,7 +877,7 @@ inline auto game_round(GameHistory& game_history, BoardStateZobristTable::HashIn
             else {
                 // draw claim invalid
                 std::cout << "Invalid operation: cannot claim draw." << std::endl;
-                return board_state_hash;
+                return false;
             }
         }
     }
@@ -816,9 +921,9 @@ inline auto game_round(GameHistory& game_history, BoardStateZobristTable::HashIn
     // prepare for next turn
     //---------------------------------
 
-    game_history.push_game_state(new_game_state, new_board_state_hash);
+    game_history.push_game_state(op, new_game_state, new_board_state_hash);
 
-    return new_board_state_hash;
+    return true;
 }
 
 
