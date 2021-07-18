@@ -63,7 +63,7 @@ vcpkg_setup() {
 vcpkg_install() {
     (
         cd $vcpkg_dir && {
-            ./vcpkg install asio catch2
+            ./vcpkg install asio catch2 grpc
         }
     )
 }

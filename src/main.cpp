@@ -4,8 +4,17 @@
 #include <vector>
 
 #include "chess/operation.hpp"
+#include "server.hpp"
 
-int main() {
+int main(int argc, char** argv) {
+    using namespace chess;
+
+    RunServer();
+
+    return 0;
+}
+
+int game() {
 
     using namespace std;
     using namespace chess;

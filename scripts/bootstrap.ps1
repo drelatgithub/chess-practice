@@ -50,7 +50,7 @@ Function Install-VcpkgPackages() {
     $Env:VCPKG_DEFAULT_TRIPLET="x64-windows"
 
     Set-Location $vcpkg_dir
-    .\vcpkg install asio catch2
+    .\vcpkg install asio catch2 grpc
 }
 
 # Generate using CMake

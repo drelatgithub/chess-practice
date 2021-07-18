@@ -5,3 +5,5 @@
 # Generated files
 ## C++
 /build/
+## C++ compiled from proto
+/src/proto/
