@@ -44,7 +44,7 @@ struct ChessClient {
     }
 };
 
-void run_client(std::string target) {
+inline void run_client(std::string target) {
     using namespace std;
     using namespace grpc;
     using namespace chess_proto;
@@ -56,13 +56,13 @@ void run_client(std::string target) {
     std::atomic_bool read_finish { false };
 
     // Create a thread receiving message.
-    std::thread([stream, &read_finish]() {
+    std::thread reader([stream, &read_finish]() {
         ChessReply rep;
         while (stream->Read(&rep) && !read_finish) {
             std::cout << rep.message();
         }
         std::cout<< "Server receive finished"<<std::endl;
-    }).join();
+    });
 
     // Send initialization to server.
     client.send_command(stream, "init");
@@ -80,6 +80,7 @@ void run_client(std::string target) {
 
     // Finishing up.
     read_finish = true;
+    reader.join();
     Status status = stream->Finish();
     if(!status.ok()) {
         cout << "RPC failed." << endl;
