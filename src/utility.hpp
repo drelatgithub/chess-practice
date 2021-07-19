@@ -6,7 +6,15 @@
 
 namespace chess {
 
+// auxiliary functions
+//-------------------------------------
+
+// A random seed based on clock cycles
+unsigned long long rdtsc();
+
+
 // debug
+//-------------------------------------
 
 #ifdef NDEBUG
 constexpr bool debug = false;
@@ -16,6 +24,7 @@ constexpr bool debug = true;
 
 
 // concepts
+//-------------------------------------
 
 template< typename T >
 concept EnumType = std::is_enum_v< T >;
@@ -25,8 +34,9 @@ constexpr auto underlying(T a) { return static_cast< std::underlying_type_t< T >
 
 
 // random
+//-------------------------------------
 
-inline std::mt19937 rand_gen;
+inline std::mt19937 rand_gen(rdtsc());
 
 } // namespace chess
 

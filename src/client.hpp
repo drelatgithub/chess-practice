@@ -1,54 +1,90 @@
 #ifndef CHESS_CLIENT_HPP
 #define CHESS_CLIENT_HPP
 
+#include <atomic>
+#include <cstdint>
+#include <memory> // shared_ptr, unique_ptr
+#include <thread>
+#include <utility> // move
+
 #include <grpcpp/grpcpp.h>
 
 #include "proto/helloworld.grpc.pb.h"
-
-using grpc::Channel;
-using grpc::ClientContext;
-using grpc::Status;
-using helloworld::Greeter;
-using helloworld::HelloReply;
-using helloworld::HelloRequest;
+#include "utility.hpp"
 
 namespace chess {
 
-class GreeterClient {
-public:
-    GreeterClient(std::shared_ptr<grpc::Channel> channel)
-        : stub_(helloworld::Greeter::NewStub(channel)) {}
+struct ChessClient {
+    using PtrRW = std::shared_ptr<grpc::ClientReaderWriter<chess_proto::ChessRequest, chess_proto::ChessReply> >;
+
+    std::uint64_t id = 0;
+
+    std::unique_ptr<chess_proto::ChessServer::Stub> stub;
+
+    // synchronization
+
+    ChessClient(std::shared_ptr<grpc::Channel> channel) :
+        stub(chess_proto::ChessServer::NewStub(channel)),
+        id(std::uniform_int_distribution<std::uint64_t>(1)(rand_gen))
+    {}
 
     // Assembles the client's payload, sends it and presents the response back
     // from the server.
-    std::string SayHello(const std::string& user) {
-        // Data we are sending to the server.
-        helloworld::HelloRequest request;
-        request.set_name(user);
+    void send_command(PtrRW stream, std::string command) {
 
-        // Container for the data we expect from the server.
-        helloworld::HelloReply reply;
+        // grpc::ClientContext context;
 
-        // Context for the client. It could be used to convey extra information to
-        // the server and/or tweak certain RPC behaviors.
-        grpc::ClientContext context;
+        // PtrRW stream(stub_->RouteChat(&context));
 
-        // The actual RPC.
-        grpc::Status status = stub_->SayHello(&context, request, &reply);
+        chess_proto::ChessRequest req;
+        req.set_id(id);
+        req.set_command(std::move(command));
 
-        // Act upon its status.
-        if (status.ok()) {
-            return reply.message();
-        } else {
-            std::cout << status.error_code() << ": " << status.error_message()
-                        << std::endl;
-            return "RPC failed";
+        stream->Write(req);
+    }
+};
+
+void run_client(std::string target) {
+    using namespace std;
+    using namespace grpc;
+    using namespace chess_proto;
+
+    ChessClient client(CreateChannel(std::move(target), InsecureChannelCredentials()));
+    ClientContext context;
+
+    ChessClient::PtrRW stream(client.stub->Command(&context));
+    std::atomic_bool read_finish { false };
+
+    // Create a thread receiving message.
+    std::thread([stream, &read_finish]() {
+        ChessReply rep;
+        while (stream->Read(&rep) && !read_finish) {
+            std::cout << rep.message();
+        }
+        std::cout<< "Server receive finished"<<std::endl;
+    }).join();
+
+    // Send initialization to server.
+    client.send_command(stream, "init");
+
+    // Start playing.
+    while(true) {
+        string command;
+        getline(cin, command);
+
+        client.send_command(stream, command);
+        if(command == "exit") {
+            break;
         }
     }
 
-private:
-    std::unique_ptr<Greeter::Stub> stub_;
-};
+    // Finishing up.
+    read_finish = true;
+    Status status = stream->Finish();
+    if(!status.ok()) {
+        cout << "RPC failed." << endl;
+    }
+}
 
 } // namespace chess
 

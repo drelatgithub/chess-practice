@@ -14,20 +14,21 @@
 
 syntax = "proto3";
 
-package helloworld;
+package chess_proto;
 
 // The greeting service definition.
-service Greeter {
+service ChessServer {
   // Sends a greeting
-  rpc SayHello (HelloRequest) returns (HelloReply) {}
+  rpc Command (stream ChessRequest) returns (stream ChessReply) {}
 }
 
 // The request message containing the user's name.
-message HelloRequest {
-  string name = 1;
+message ChessRequest {
+  uint64 id = 1;
+  string command = 2;
 }
 
 // The response message containing the greetings
-message HelloReply {
+message ChessReply {
   string message = 1;
 }
