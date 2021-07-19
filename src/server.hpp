@@ -12,7 +12,7 @@
 namespace chess {
 
 // Logic and data behind the server's behavior.
-class GreeterServiceImpl final : public helloworld::Greeter::Service {
+struct ChessServiceImpl final : public helloworld::Greeter::Service {
     grpc::Status SayHello(grpc::ServerContext* context, const helloworld::HelloRequest* request, helloworld::HelloReply* reply) override {
         std::string prefix("Hello ");
         reply->set_message(prefix + request->name());
@@ -22,7 +22,7 @@ class GreeterServiceImpl final : public helloworld::Greeter::Service {
 
 void RunServer() {
     std::string server_address("0.0.0.0:50051");
-    GreeterServiceImpl service;
+    ChessServiceImpl service;
 
     grpc::EnableDefaultHealthCheckService(true);
     grpc::reflection::InitProtoReflectionServerBuilderPlugin();
