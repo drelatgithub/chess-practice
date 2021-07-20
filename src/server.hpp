@@ -232,7 +232,7 @@ struct ChessServiceImpl {
             // tells us whether there is any kind of event or cq_ is shutting down.
             GPR_ASSERT(cq->Next(&tag, &ok));
             if (!ok) {
-                cout << "[Queue] Error: invalid completion queue item." << endl;
+                cout << "[Queue] Warning: invalid completion queue item." << endl;
                 continue;
             }
             auto session = get_tag(tag);

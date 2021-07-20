@@ -816,12 +816,12 @@ struct GameHistory {
 // Note:
 //   - New game state will be pushed only if the operation is valid. Otherwise,
 //     no progress will be made in game.
-inline bool game_round(GameHistory& game_history, const Operation& op) {
+inline bool game_round(GameHistory& game_history, const Operation& op, std::ostream& os) {
     using enum Occupation;
 
     auto p_current_item = game_history.ptr_current_item();
     if(p_current_item == nullptr) {
-        std::cout << "Game history is empty." << std::endl;
+        os << "Game history is empty." << std::endl;
         return false;
     }
 
@@ -833,7 +833,7 @@ inline bool game_round(GameHistory& game_history, const Operation& op) {
     //---------------------------------
     const auto op_validation = validate_operation(game_state, op);
     if(!op_validation.okay) {
-        std::cout << "Invalid operation: " << op_validation.error_message << std::endl;
+        os << "Invalid operation: " << op_validation.error_message << std::endl;
         return false;
     }
 
@@ -850,7 +850,7 @@ inline bool game_round(GameHistory& game_history, const Operation& op) {
     if(new_game_state.status == GameState::Status::active) {
         // check whether king is under attack
         if(new_game_state.board_state.position_attacked(new_game_state.friend_king_x(), new_game_state.friend_king_y(), !new_game_state.board_state.black_turn)) {
-            std::cout << "Invalid operation: king will be attacked." << std::endl;
+            os << "Invalid operation: king will be attacked." << std::endl;
             // reject new game state
             return false;
         }
@@ -876,7 +876,7 @@ inline bool game_round(GameHistory& game_history, const Operation& op) {
             }
             else {
                 // draw claim invalid
-                std::cout << "Invalid operation: cannot claim draw." << std::endl;
+                os << "Invalid operation: cannot claim draw." << std::endl;
                 return false;
             }
         }

@@ -75,7 +75,8 @@ inline bool server_game_step(GameHistory& gh, bool from_black, std::string comma
         if(words[0] == "resign") {
             bool valid = game_round(
                 gh,
-                Operation { Operation::Category::resign }
+                Operation { Operation::Category::resign },
+                os_message
             );
             if(valid) os_message << command_prompt() << " resigned.";
             return valid;
@@ -83,7 +84,8 @@ inline bool server_game_step(GameHistory& gh, bool from_black, std::string comma
         else if(words[0] == "da") {
             bool valid = game_round(
                 gh,
-                Operation { Operation::Category::draw_accept }
+                Operation { Operation::Category::draw_accept },
+                os_message
             );
             if(valid) os_message << command_prompt() << " accepted draw.";
             return valid;
@@ -144,7 +146,7 @@ inline bool server_game_step(GameHistory& gh, bool from_black, std::string comma
                     }
                 }
 
-                bool valid = game_round(gh, op);
+                bool valid = game_round(gh, op, os_message);
                 if(valid) print_status();
                 return valid;
             }
@@ -157,7 +159,8 @@ inline bool server_game_step(GameHistory& gh, bool from_black, std::string comma
                     Operation::Category::castle,
                     4, king_y,
                     6, king_y
-                }
+                },
+                os_message
             );
             if(valid) print_status();
             return valid;
@@ -170,7 +173,8 @@ inline bool server_game_step(GameHistory& gh, bool from_black, std::string comma
                     Operation::Category::castle,
                     4, king_y,
                     2, king_y
-                }
+                },
+                os_message
             );
             if(valid) print_status();
             return valid;
